@@ -1,0 +1,51 @@
+# 공개 기간이 끝나면 이 저장소를 비공개로 바꾼다.
+# 저장소 공개 범위 변경은 기본 토큰으로 안 되므로 Administration 권한이 있는 토큰을
+# 저장소 Secret `REPO_ADMIN_TOKEN` 으로 등록해 둔다.
+name: Auto private
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 매일 09:00 KST
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+env:
+  EXPIRE_ON: "2026-12-27"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # 공개 저장소는 60일 동안 활동이 없으면 예약 실행이 꺼진다. 매번 다시 켜 둔다
+      - name: Keep schedule alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/auto-private.yml/enable"
+
+      - name: Make private after expiry
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          today=$(TZ=Asia/Seoul date +%F)
+          if [[ "$today" < "$EXPIRE_ON" ]]; then
+            echo "공개 유지: $today (전환일 $EXPIRE_ON)"
+            exit 0
+          fi
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::REPO_ADMIN_TOKEN Secret이 없습니다"
+            exit 1
+          fi
+          gh repo edit "${{ github.repository }}" --visibility private --accept-visibility-change-consequences
+          echo "비공개로 전환했습니다"
+
+      # 비공개 저장소에서는 Actions 사용 시간이 과금 대상이 되므로 전환 후에는 이 작업을 끈다
+      - name: Disable this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          today=$(TZ=Asia/Seoul date +%F)
+          if [[ ! "$today" < "$EXPIRE_ON" ]]; then
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/auto-private.yml/disable"
+          fi
